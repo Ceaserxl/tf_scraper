@@ -25,24 +25,24 @@ run_scraper() {
 
   if screen_exists; then
     echo "🧹 Killing old screen session..."
-    sudo docker exec "$CONTAINER" /usr/bin/screen -S $SCREEN_NAME -X quit
+    sudo docker exec "$CONTAINER" /usr/bin/screen -S "$SCREEN_NAME" -X quit
   fi
 
   echo "🚀 Launching scraper inside screen..."
-  sudo -E docker exec -it --user $USER "$CONTAINER" \
+  sudo -E docker exec -it --user "$USER" "$CONTAINER" \
     script -q -c "/usr/bin/screen -U -S $SCREEN_NAME -m python /app/main.py run $*" /dev/null
 }
 
 attach_screen() {
   ensure_container_running
   echo "🔍 Attaching (CTRL+A then D to detach)..."
-  sudo docker exec -it --user $USER "$CONTAINER" \
-    /usr/bin/screen -r -U $SCREEN_NAME
+  sudo docker exec -it --user "$USER" "$CONTAINER" \
+    /usr/bin/screen -r -U "$SCREEN_NAME"
 }
 
 stop_screen() {
   ensure_container_running
-  sudo docker exec "$CONTAINER" /usr/bin/screen -S $SCREEN_NAME -X quit || true
+  sudo docker exec "$CONTAINER" /usr/bin/screen -S "$SCREEN_NAME" -X quit || true
   echo "✔ Screen session stopped."
 }
 
@@ -70,15 +70,9 @@ while true; do
   echo "========================================"
   echo "           🌀 Scraper Control"
   echo "========================================"
-<<<<<<< HEAD
-  echo "1) Run Scraper (enter tags)"
-  echo "2) Run Scraper With Custom Arguments"
-  echo "3) Attach To Screen Session"
-=======
   echo "1) Run Scraper (Enter Tags)"
   echo "2) Run Scraper With Raw Arguments"
   echo "3) Attach to Screen Session"
->>>>>>> dee289093fa931847e85f4a32fd7f105c2c655d3
   echo "4) Stop Screen Session"
   echo "5) Stop Docker Container"
   echo "6) Destroy Docker Container"
@@ -88,25 +82,17 @@ while true; do
 
   case "$choice" in
     1)
-<<<<<<< HEAD
-      read -p "Enter tags (example: nicoleponyxo husvjjal): " TAGS
-=======
       echo
       read -p "Enter tags (example: nicoleponyxo thick -vf): " TAGS
       echo
->>>>>>> dee289093fa931847e85f4a32fd7f105c2c655d3
       run_scraper $TAGS
       read -p "Press ENTER to return to menu..."
       ;;
 
     2)
-<<<<<<< HEAD
-      read -p "Enter full scraper args (example: -vf -iv tag1 tag2): " ARGS
-=======
       echo
       read -p "Enter full arguments (example: run -g <url> -vf): " ARGS
       echo
->>>>>>> dee289093fa931847e85f4a32fd7f105c2c655d3
       run_scraper $ARGS
       read -p "Press ENTER to return to menu..."
       ;;
