@@ -1,0 +1,11 @@
+# Ignore user data folder
+userdata/
+
+# Ignore Python cache
+__pycache__/
+
+# Ignore downloads folder
+downloads/
+downloads2/
+downloads_win/
+cache/
