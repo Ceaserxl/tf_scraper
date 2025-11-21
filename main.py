@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 from common.images import process_images
 from common.videos import process_videos
-from common.common import launch_chromium
+from common.common import launch_chromium, download_file
 from common import cache_db
 
 import json
@@ -441,88 +441,80 @@ async def phase2_scan_galleries(tag_to_galleries):
 async def download_gallery_images(link, tag, snippets, box_count, tag_total):
     async with semaphore_galleries:
         gallery_name = os.path.basename(urlparse(link).path.strip("/"))
-        tag_folder = f"{tag_total}-{tag}"
-        base_dir = os.path.join(download_path, "images", tag_folder, f"{box_count}-{gallery_name}", "images")
+        tag_folder   = f"{tag_total}-{tag}"
+        base_dir     = os.path.join(download_path, "images", tag_folder, f"{box_count}-{gallery_name}", "images")
 
         per_gallery_image_conc = max(1, PROCESS_IMAGES)
 
         async def process_once():
-            # -------------------------------
-            # Build HTML and extract boxes
-            # -------------------------------
             p, context = await launch_chromium(f"userdata/{gallery_name}_img", headless=True)
             page = await context.new_page()
             await page.set_content("<html><body>" + "".join(snippets) + "</body></html>", timeout=60000)
 
+            # extract all boxes with images
             boxes = await page.query_selector_all("body > div")
-            image_boxes = [b for b in boxes if await b.query_selector("img")]
+            image_boxes = []
+            for b in boxes:
+                img = await b.query_selector("img")
+                if img:
+                    image_boxes.append(b)
+
             total_expected = len(image_boxes)
 
-            # -------------------------------
-            # Check existing files already on disk
-            # -------------------------------
+            # ensure folder exists
             os.makedirs(base_dir, exist_ok=True)
 
+            # find already downloaded indexes
             existing = set()
             for f in os.listdir(base_dir):
-                if f.lower().startswith(gallery_name.lower() + "-"):
+                if f.startswith(gallery_name + "-"):
                     idx = f.split("-")[-1].split(".")[0]
                     if idx.isdigit():
                         existing.add(int(idx))
 
-            all_indexes = set(range(1, total_expected + 1))
-            missing = sorted(all_indexes - existing)
+            missing_indexes = sorted(set(range(1, total_expected + 1)) - existing)
 
-            if not missing:
+            if not missing_indexes:
                 await context.close()
                 await p.stop()
                 return 0
 
-            # -------------------------------
-            # Filter boxes down to missing only
-            # -------------------------------
+            # build list of (idx, box) to download
             missing_boxes = [
-                (idx, b)
-                for idx, b in enumerate(image_boxes, start=1)
-                if idx in missing
+                (idx, image_boxes[idx - 1])
+                for idx in missing_indexes
             ]
 
-            if not missing_boxes:
-                await context.close()
-                await p.stop()
-                return 0
-
-            # -------------------------------
-            # Download only missing images
-            # -------------------------------
-            tasks = []
-            for idx, box in missing_boxes:
-                tasks.append(
-                    asyncio.create_task(
-                        asyncio.to_thread(
-                            download_file,
-                            await box.query_selector("img").get_attribute("src"),
-                            base_dir,
-                            None,  # referer
-                            None,  # ext
-                            idx,
-                            gallery_name
-                        )
-                    )
-                )
-
-            # Run with concurrency limiter
             sem = asyncio.Semaphore(per_gallery_image_conc)
+            results = []
 
-            async def limited(task):
+            async def download_one(idx, box):
                 async with sem:
-                    return await task
+                    img = await box.query_selector("img")
+                    if not img:
+                        return False
 
-            results = await asyncio.gather(*(limited(t) for t in tasks))
+                    src = await img.get_attribute("src")
+                    if not src:
+                        return False
+
+                    return await asyncio.to_thread(
+                        download_file,
+                        src,
+                        base_dir,
+                        None,
+                        None,
+                        idx,
+                        gallery_name
+                    )
+
+            for idx, box in missing_boxes:
+                results.append(download_one(idx, box))
+
+            finished = await asyncio.gather(*results)
             await context.close()
             await p.stop()
-
-            return sum(1 for r in results if r)
+            return sum(1 for x in finished if x)
 
         try:
             return await process_once()
@@ -538,8 +530,8 @@ async def download_gallery_images(link, tag, snippets, box_count, tag_total):
 async def download_gallery_videos(link, tag, snippets, box_count, tag_total):
     async with semaphore_galleries:
         gallery_name = os.path.basename(urlparse(link).path.strip("/"))
-        tag_folder = f"{tag_total}-{tag}"
-        base_dir = os.path.join(download_path, "videos", tag_folder, f"{box_count}-{gallery_name}", "videos")
+        tag_folder   = f"{tag_total}-{tag}"
+        base_dir     = os.path.join(download_path, "videos", tag_folder, f"{box_count}-{gallery_name}", "videos")
 
         per_gallery_video_conc = max(1, PROCESS_VIDEOS)
 
@@ -549,50 +541,50 @@ async def download_gallery_videos(link, tag, snippets, box_count, tag_total):
             await page.set_content("<html><body>" + "".join(snippets) + "</body></html>", timeout=60000)
 
             boxes = await page.query_selector_all("body > div")
-            video_boxes = [b for b in boxes if await b.query_selector("img[src*='icon-play.svg']")]
+            video_boxes = []
+            for b in boxes:
+                play_icon = await b.query_selector("img[src*='icon-play.svg']")
+                if play_icon:
+                    video_boxes.append(b)
+
             total_expected = len(video_boxes)
 
             os.makedirs(base_dir, exist_ok=True)
 
             existing = set()
             for f in os.listdir(base_dir):
-                if f.lower().startswith(gallery_name.lower() + "-"):
+                if f.startswith(gallery_name + "-"):
                     idx = f.split("-")[-1].split(".")[0]
                     if idx.isdigit():
                         existing.add(int(idx))
 
-            all_indexes = set(range(1, total_expected + 1))
-            missing = sorted(all_indexes - existing)
+            missing_indexes = sorted(set(range(1, total_expected + 1)) - existing)
 
-            if not missing:
+            if not missing_indexes:
                 await context.close()
                 await p.stop()
                 return 0
 
             missing_boxes = [
-                (idx, b)
-                for idx, b in enumerate(video_boxes, start=1)
-                if idx in missing
+                (idx, video_boxes[idx - 1])
+                for idx in missing_indexes
             ]
-
-            if not missing_boxes:
-                await context.close()
-                await p.stop()
-                return 0
 
             sem = asyncio.Semaphore(per_gallery_video_conc)
 
-            async def download_missing_video(idx, box):
+            async def download_one(idx, box):
                 async with sem:
+                    # process_videos expects list[box]
                     return await process_videos(
-                        [box],  # only this box
+                        [box],
                         base_dir,
                         gallery_name,
                         1,
                         context=context
                     )
 
-            results = await asyncio.gather(*(download_missing_video(idx, box) for idx, box in missing_boxes))
+            tasks = [download_one(idx, b) for idx, b in missing_boxes]
+            results = await asyncio.gather(*tasks)
 
             await context.close()
             await p.stop()
@@ -608,8 +600,6 @@ async def download_gallery_videos(link, tag, snippets, box_count, tag_total):
             except:
                 safe_print(f"❌ Video phase failed for {gallery_name}")
                 return 0
-
-
 
 async def phase3_download(ordered_galleries, mode, images_videos_together=False):
     print_banner(f"Phase 3 — Downloading {len(ordered_galleries)} galleries", "🚀")
